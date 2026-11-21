@@ -12,10 +12,11 @@ const avatarTone = (id: string): string => {
 
 const ICON_SIZE = { sm: 20, md: 24, lg: 40 } as const;
 
-// Chat list avatar. Renders from the sidebar's ONE batch request (useProfilePictures) — firing a
-// query per row burst the per-IP throttle into 429s. The generic icon stays while the batch loads
-// or when the contact hides their picture. The room header and the contact panel reuse it for the
-// open chat, whose single-picture query hands `onImageError` a refetch for an expired CDN URL.
+// Chat list avatar. Renders from the sidebar's prioritized batch requests (useProfilePictures) —
+// firing a query per row bursts the per-IP throttle into 429s. The generic icon stays while the
+// first batch loads or when the contact hides their picture. The room header and the contact panel
+// reuse it for the open chat, whose single-picture query hands `onImageError` a refetch for an
+// expired CDN URL.
 function ChatAvatar({
   chatId,
   pictureUrl,

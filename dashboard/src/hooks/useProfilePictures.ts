@@ -8,6 +8,10 @@ const PICTURE_TTL_MS = 60 * 60 * 1000;
 // answer. A null is held for a minute only: a failure heals on the next change of ids after that, and a real null
 // costs one more lookup then. An absent id is asked for again at once.
 const NULL_TTL_MS = 60 * 1000;
+// The first rows are the ones the operator can see immediately. The rest of the capped sidebar is
+// topped up after this query resolves, so a slow contact lookup cannot hold the first paint hostage.
+const MAX_PICTURE_IDS = 50;
+const PRIORITY_PICTURE_IDS = 10;
 
 interface ResolvedPicture {
   url: string | null;
@@ -15,6 +19,7 @@ interface ResolvedPicture {
 }
 
 type Held = Map<string, ResolvedPicture>;
+type Pending = Map<string, Set<string>>;
 
 // What each session's batches were told, with the time it arrived. It is kept in the query cache, beside the data
 // of the batches it came with, and not with the page: a page that mounts again finds it instead of asking for every
@@ -22,6 +27,7 @@ type Held = Map<string, ResolvedPicture>;
 // small and its entries age out by their own clock.
 const HELD_KEY = 'profilePicturesHeld';
 const heldKey = (sessionId: string) => [HELD_KEY, sessionId] as const;
+const pendingByClient = new WeakMap<QueryClient, Pending>();
 function heldFor(client: QueryClient, sessionId: string): Held {
   client.setQueryDefaults([HELD_KEY], { gcTime: Infinity });
   let held = client.getQueryData<Held>(heldKey(sessionId));
@@ -32,6 +38,20 @@ function heldFor(client: QueryClient, sessionId: string): Held {
   return held;
 }
 
+function pendingFor(client: QueryClient, sessionId: string): Set<string> {
+  let pending = pendingByClient.get(client);
+  if (!pending) {
+    pending = new Map();
+    pendingByClient.set(client, pending);
+  }
+  let ids = pending.get(sessionId);
+  if (!ids) {
+    ids = new Set();
+    pending.set(sessionId, ids);
+  }
+  return ids;
+}
+
 /**
  * Batch-fetch profile picture URLs for a list of chat ids in ONE request (the chat-list sidebar).
  * Firing one useProfilePicture per row bursts N parallel calls and exhausts the per-IP throttle
@@ -39,7 +59,8 @@ function heldFor(client: QueryClient, sessionId: string): Held {
  *
  * Ids are resolved in LIST ORDER, capped at 50 — for long sidebars the visible top rows get their
  * pictures instead of an arbitrary sorted subset (which can exclude every row on screen). The
- * query key uses the sorted id set so reordering the sidebar doesn't refetch.
+ * first ten are awaited for the first paint; the remaining ids are topped up in the background.
+ * The query key uses the sorted id set so reordering the sidebar doesn't refetch.
  *
  * A change of membership (a message from a chat outside the top 50 pushes one out) is a new key, but
  * only the ids not held yet are asked for: every answer is kept per session with the time it arrived and
@@ -54,7 +75,7 @@ function heldFor(client: QueryClient, sessionId: string): Held {
  */
 export function useProfilePictures(sessionId: string | undefined, contactIds: string[]) {
   const queryClient = useQueryClient();
-  const requestIds = contactIds.slice(0, 50); // list order: the visible top rows win the cap
+  const requestIds = contactIds.slice(0, MAX_PICTURE_IDS); // list order: visible top rows win the cap
   const sortedKey = [...requestIds].sort().join(',');
   return useQuery<Record<string, string | null>, Error>({
     queryKey: ['profilePictures', sessionId, sortedKey] as const,
@@ -74,16 +95,41 @@ export function useProfilePictures(sessionId: string | undefined, contactIds: st
         const entry = held.get(id);
         return invalidated || !entry || now - entry.at >= (entry.url === null ? NULL_TTL_MS : PICTURE_TTL_MS);
       });
-      if (missing.length > 0) {
+      const priorityIds = new Set(requestIds.slice(0, PRIORITY_PICTURE_IDS));
+      const priorityMissing = missing.filter(id => priorityIds.has(id));
+      const backgroundMissing = missing.filter(id => !priorityIds.has(id));
+      const pending = pendingFor(client, sessionId!);
+      const save = (pictures: Record<string, string | null>) => {
+        const at = Date.now();
+        for (const id of Object.keys(pictures)) held.set(id, { url: pictures[id], at });
+      };
+      if (priorityMissing.length > 0) {
         try {
-          const { pictures } = await contactApi.profilePictures(sessionId!, missing);
-          const at = Date.now();
-          for (const id of missing) if (id in pictures) held.set(id, { url: pictures[id], at });
+          priorityMissing.forEach(id => pending.add(id));
+          const { pictures } = await contactApi.profilePictures(sessionId!, priorityMissing);
+          save(pictures);
         } catch (err) {
           // A failed top-up (throttled, engine starting) must not blank the pictures already held. The ids
           // it left out stay unresolved and are asked for again on the next change of membership.
           if (Object.keys(view()).length === 0) throw err;
+        } finally {
+          priorityMissing.forEach(id => pending.delete(id));
         }
+      }
+      // Do not make the first visible rows wait for the rest of the sidebar. The background request
+      // updates the same query cache as soon as it settles, so rows farther down appear without a
+      // second page load and an in-flight set prevents focus/remounts from duplicating the work.
+      const topUp = backgroundMissing.filter(id => !pending.has(id));
+      if (topUp.length > 0) {
+        topUp.forEach(id => pending.add(id));
+        void contactApi
+          .profilePictures(sessionId!, topUp)
+          .then(({ pictures }) => {
+            save(pictures);
+            client.setQueryData(queryKey, view());
+          })
+          .catch(() => undefined)
+          .finally(() => topUp.forEach(id => pending.delete(id)));
       }
       return view();
     },
