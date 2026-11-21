@@ -39,16 +39,29 @@ const queryClient = new QueryClient({
 });
 
 function AppContent() {
+  const routerBasename = resolveRouterBasename(window.location.pathname);
   // Capture the key ONCE at mount. Read live per render, the null→key transition when
   // handleLogin stores a fresh key would re-fire the startup re-validation effect below and
   // double the /auth/validate request on every sign-in — the effect is for genuine page
   // refreshes with a saved key only.
-  const [savedKey] = useState(() => sessionStorage.getItem('openwa_api_key'));
+  // Account sessions under /platform use the gateway's HttpOnly cookie. A key left by the
+  // legacy OpenWA login must never be reused there, or a second account in the same browser
+  // tab would continue reading the previous account's sessions and chats.
+  const [savedKey] = useState(() =>
+    routerBasename === '/platform' ? null : sessionStorage.getItem('openwa_api_key'),
+  );
   const [isAuthenticated, setIsAuthenticated] = useState(!!savedKey);
-  const routerBasename = resolveRouterBasename(window.location.pathname);
   const [isAccountSessionChecking, setIsAccountSessionChecking] = useState(() => routerBasename === '/platform' && !savedKey);
   const [, setApiKey] = useState(savedKey || '');
   const { setRole, role, setEngineType, setScoped, scoped } = useRole();
+
+  useEffect(() => {
+    if (routerBasename !== '/platform') return;
+    sessionStorage.removeItem('openwa_api_key');
+    sessionStorage.removeItem('openwa_user_role');
+    sessionStorage.removeItem('openwa_engine_type');
+    sessionStorage.removeItem('openwa_key_scoped');
+  }, [routerBasename]);
 
   const handleLogin = (key: string, validatedRole?: string, engineType?: string, scoped = false) => {
     setApiKey(key);
@@ -75,7 +88,12 @@ function AppContent() {
     // clear a logout → login in the same tab with a different key/scope shows the previous
     // actor's sessions/messages/apiKeys/audit rows.
     clearActorState(queryClient);
-  }, [setRole, setEngineType, setScoped]);
+    if (routerBasename === '/platform') {
+      void fetch(`${API_BASE_URL}/auth/logout`, { method: 'POST', credentials: 'include' }).finally(() => {
+        window.location.assign('/');
+      });
+    }
+  }, [routerBasename, setRole, setEngineType, setScoped]);
 
   // Re-validate and refresh the role on mount if already authenticated
   useEffect(() => {

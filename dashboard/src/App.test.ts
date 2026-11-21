@@ -9,17 +9,21 @@ import { createElement } from 'react';
 let role = 'operator';
 let scoped = false;
 const requested: string[] = [];
+let lastValidationHeaders: Headers | undefined;
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
 function installFetchStub(): void {
-  globalThis.fetch = ((input: RequestInfo | URL): Promise<Response> => {
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const path = url.replace(/^https?:\/\/[^/]+/, '');
     requested.push(path);
-    if (path === '/api/auth/validate') return Promise.resolve(jsonResponse({ valid: true, role, scoped }));
+    if (path === '/api/auth/validate') {
+      lastValidationHeaders = new Headers(init?.headers);
+      return Promise.resolve(jsonResponse({ valid: true, role, scoped }));
+    }
     if (path === '/api/audit' || path.startsWith('/api/audit?'))
       return Promise.resolve(jsonResponse({ data: [], total: 0 }));
     // One ready session: the Number Checker runs below need one, and the app's query cache keeps the first answer.
@@ -65,6 +69,7 @@ before(async () => {
 afterEach(() => {
   rtl.cleanup();
   scoped = false;
+  lastValidationHeaders = undefined;
   window.sessionStorage.removeItem('openwa_key_scoped');
 });
 
@@ -76,6 +81,13 @@ function renderAt(path: string, as: string): void {
   window.sessionStorage.setItem('openwa_user_role', as);
   rtl.render(createElement(App));
 }
+
+test('the account platform ignores a stale legacy API key from another tenant', async () => {
+  renderAt('/platform/', 'admin');
+  await rtl.waitFor(() => assert.ok(document.querySelector('a[href="/sessions"]')));
+  assert.equal(window.sessionStorage.getItem('openwa_api_key'), null);
+  assert.equal(lastValidationHeaders?.get('X-API-Key'), null);
+});
 
 const logsLink = (): Element | null => document.querySelector('a[href="/logs"]');
 
