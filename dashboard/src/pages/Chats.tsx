@@ -172,6 +172,39 @@ const CONFIRM_TEXT = {
   },
 } as const;
 
+// OpenWA answers the chats route with 409 while whatsapp-web.js is reconnecting. The
+// gateway can surface the same lifecycle transition as 503, so these are retried only
+// when the selected session is not ready. Other 5xx responses remain visible errors.
+const CHAT_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const;
+
+function isSessionNotReadyError(error: unknown, session: Session | undefined): boolean {
+  const status = (error as { status?: number } | null)?.status;
+  if (status !== 409 && status !== 503) return false;
+  // A stopped session also reports `disconnected`; it should remain an explicit
+  // user action rather than causing the panel to poll for a QR scan forever.
+  if (session?.engineLoaded === false) return false;
+  if (session?.status !== 'ready') return true;
+  const message = error instanceof Error ? error.message : '';
+  return /session is not connected|client is not ready|session.*disconnected|not ready/i.test(message);
+}
+
+function waitForChatRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', abort);
+    const timer = window.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      window.clearTimeout(timer);
+      cleanup();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
 export function Chats() {
   const { t } = useTranslation();
   useDocumentTitle(t('nav.chats'));
@@ -205,6 +238,7 @@ export function Chats() {
   // The session whose list `chats` holds, as listedSessionRef below says it, for rendering.
   const [listedSession, setListedSession] = useState<string>('');
   const [loadingChats, setLoadingChats] = useState<boolean>(false);
+  const [waitingForChatConnection, setWaitingForChatConnection] = useState<boolean>(false);
   // Why the list on screen is not the session's: its last foreground read failed. A list that could not be read
   // is told apart from one that is empty, which the sidebar alone would render the same way.
   const [chatsFailure, setChatsFailure] = useState<string | null>(null);
@@ -579,11 +613,31 @@ export function Chats() {
         if (!background) {
           setLoadingChats(true);
           setChatsFailure(null);
+          setWaitingForChatConnection(false);
         }
-        const data = await sessionApi.getChats(sessionId, controller.signal);
+        let data: Chat[];
+        let retry = 0;
+        for (;;) {
+          try {
+            data = await sessionApi.getChats(sessionId, controller.signal);
+            break;
+          } catch (err) {
+            if (
+              background ||
+              retry >= CHAT_RETRY_DELAYS_MS.length ||
+              !isSessionNotReadyError(err, listedSessionsRef.current.find(session => session.id === sessionId))
+            ) {
+              throw err;
+            }
+            setWaitingForChatConnection(true);
+            await waitForChatRetry(CHAT_RETRY_DELAYS_MS[retry], controller.signal);
+            retry += 1;
+          }
+        }
         if (stale()) return overtaken();
         chatsAppliedRef.current = request;
         setChatsFailure(null);
+        setWaitingForChatConnection(false);
         // A live frame can move a row past the snapshot a background refetch was built from while it is
         // out. That row is kept, or its preview and unread badge would roll back until the next message.
         const moved = (id: string) => (liveRowsRef.current.get(id) ?? 0) >= request;
@@ -621,6 +675,7 @@ export function Chats() {
         if (stale()) return overtaken();
         // A background refetch only refreshes summaries: keep the list it would have replaced.
         if (background) return false;
+        setWaitingForChatConnection(false);
         setChatsFailure(err instanceof Error ? err.message : '');
         listedSessionRef.current = sessionId;
         setListedSession(sessionId);
@@ -1090,8 +1145,14 @@ export function Chats() {
       // carry, so the list is read again. A read already out may have been answered before this change, so it is
       // followed by one more.
       if (status === 'ready' || relistRef.current.running) void relistSessions();
+      // A foreground chats read may have received the engine-not-ready response while the
+      // session was reconnecting. Once OpenWA reports ready, start one fresh read immediately
+      // instead of waiting for the retry timer or a manual refresh.
+      if (status === 'ready' && event.sessionId === selectedSessionRef.current) {
+        void loadChats(event.sessionId);
+      }
     },
-    [relistSessions],
+    [loadChats, relistSessions],
   );
   // Only the '*' refusal is kept: frames handled before a render keep the last, and another error must not hide it.
   const handleServerError = useCallback((frame: { code: string }) => {
@@ -2096,7 +2157,14 @@ export function Chats() {
         </div>
       )}
 
-      {chatsFailure !== null && !loadingChats && (
+      {waitingForChatConnection && loadingChats && (
+        <div className="chats-reconnect-banner chats-connection-waiting" role="status">
+          <Loader2 className="animate-spin" size={16} />
+          <span>{t('sessionStatus.connecting')}</span>
+        </div>
+      )}
+
+      {chatsFailure !== null && !loadingChats && !waitingForChatConnection && (
         <div className="chats-reconnect-banner" role="alert">
           <AlertCircle size={16} />
           <span>

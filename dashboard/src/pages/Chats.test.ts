@@ -4756,6 +4756,24 @@ test('a failed chat list says so and offers the read again, then clears once a r
   assert.equal(screen.queryByRole('alert') === null, true, 'the failure stayed after the list was read');
 });
 
+test('a reconnecting WhatsApp session retries its chat list without showing a fatal error', async () => {
+  const { screen } = rtl;
+  let attempts = 0;
+  chatsResponder = () => {
+    attempts += 1;
+    return Promise.resolve(
+      attempts === 1
+        ? jsonResponse({ message: 'Session is not connected. The WhatsApp client is not ready.' }, 409)
+        : jsonResponse([CHAT, CHAT_2]),
+    );
+  };
+
+  renderChats();
+  await screen.findByText('Carol');
+  assert.ok(attempts >= 2, 'the chat list was not retried after the session-not-ready response');
+  assert.equal(screen.queryByText('Failed to load chats'), null);
+});
+
 // ── The message field stays usable while a send is out ─────────────────────────
 
 // Disabling the field that holds focus makes the browser drop focus to the page (the HTML focus fixup rule), so
