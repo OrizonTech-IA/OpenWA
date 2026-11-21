@@ -11,6 +11,7 @@ import { RoleProvider } from './components/RoleProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { API_BASE_URL } from './services/api';
 import { clearActorState, isUserRole, resolveStartupValidation } from './utils/authLifecycle';
+import { resolveRouterBasename } from './utils/routerBase';
 import './App.css';
 
 const Login = lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
@@ -25,6 +26,7 @@ const MessageTester = lazy(() => import('./pages/MessageTester').then(m => ({ de
 const NumberChecker = lazy(() => import('./pages/NumberChecker').then(m => ({ default: m.NumberChecker })));
 const Infrastructure = lazy(() => import('./pages/Infrastructure').then(m => ({ default: m.Infrastructure })));
 const Plugins = lazy(() => import('./pages/Plugins'));
+const Caio = lazy(() => import('./pages/Caio').then(m => ({ default: m.Caio })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +45,8 @@ function AppContent() {
   // refreshes with a saved key only.
   const [savedKey] = useState(() => sessionStorage.getItem('openwa_api_key'));
   const [isAuthenticated, setIsAuthenticated] = useState(!!savedKey);
+  const routerBasename = resolveRouterBasename(window.location.pathname);
+  const [isAccountSessionChecking, setIsAccountSessionChecking] = useState(() => routerBasename === '/platform' && !savedKey);
   const [, setApiKey] = useState(savedKey || '');
   const { setRole, role, setEngineType, setScoped, scoped } = useRole();
 
@@ -75,6 +79,28 @@ function AppContent() {
 
   // Re-validate and refresh the role on mount if already authenticated
   useEffect(() => {
+    // The account gateway authenticates `/platform` with its HttpOnly cookie. There is no
+    // OpenWA API key for the browser to enter in that flow, so validate the account session
+    // directly before mounting the dashboard instead of showing the legacy API-key login.
+    if (!savedKey && routerBasename === '/platform') {
+      fetch(`${API_BASE_URL}/auth/validate`, { method: 'POST', credentials: 'include' })
+        .then(async res => {
+          const decision = resolveStartupValidation(res.status, await res.json().catch(() => null));
+          if (decision.action === 'role') {
+            setRole(decision.role);
+            setScoped(decision.scoped);
+            if (decision.engineType) setEngineType(decision.engineType);
+            setIsAuthenticated(true);
+          } else {
+            setIsAuthenticated(false);
+          }
+        })
+        .catch(() => setIsAuthenticated(false))
+        .finally(() => setIsAccountSessionChecking(false));
+      return;
+    }
+
+    setIsAccountSessionChecking(false);
     if (!savedKey) return;
 
     fetch(`${API_BASE_URL}/auth/validate`, {
@@ -99,13 +125,17 @@ function AppContent() {
         // Network failure (API unreachable): keep the cached role so a transient outage at
         // page load doesn't eject the user — an explicit 401/403 above still logs out.
       });
-  }, [savedKey, setRole, setEngineType, setScoped, handleLogout]);
+  }, [savedKey, routerBasename, setRole, setEngineType, setScoped, handleLogout]);
 
   const loadingFallback = (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
       <Loader2 className="animate-spin" size={32} />
     </div>
   );
+
+  if (isAccountSessionChecking) {
+    return loadingFallback;
+  }
 
   if (!isAuthenticated) {
     return (
@@ -119,7 +149,7 @@ function AppContent() {
     <ToastProvider>
       {/* Above the routes, so a bulk Number Checker run survives leaving its page; a logout unmounts it. */}
       <NumberCheckProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={routerBasename}>
           <Suspense fallback={loadingFallback}>
             <Routes>
               <Route path="/" element={<Layout onLogout={handleLogout} userRole={role} />}>
@@ -134,6 +164,7 @@ function AppContent() {
                 <Route path="message-tester" element={<MessageTester />} />
                 {role === 'admin' && !scoped && <Route path="infrastructure" element={<Infrastructure />} />}
                 {role === 'admin' && !scoped && <Route path="plugins" element={<Plugins />} />}
+                <Route path="caio" element={<Caio />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
             </Routes>
