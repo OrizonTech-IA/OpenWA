@@ -73,7 +73,8 @@
     "infrastructure": "Infraestructura",
     "plugins": "Plugins",
     "logs": "Registros",
-    "templates": "Plantillas"
+    "templates": "Plantillas",
+    "caio": "CAIO"
   },
   "chats": {
     "edited": "Editado",

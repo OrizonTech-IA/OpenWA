@@ -1,0 +1,39 @@
+.caio-page { max-width: 1180px; margin: 0 auto; padding: 32px; color: var(--text-primary); }
+.caio-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.caio-eyebrow { display: inline-flex; align-items: center; gap: 8px; color: var(--primary-text); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.caio-header h1 { margin: 8px 0 4px; font-size: 34px; }
+.caio-header p, .caio-panel-heading p { margin: 0; color: var(--text-secondary); }
+.caio-company-picker { display: grid; gap: 7px; min-width: 240px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
+.caio-company-picker select, .caio-panel input, .caio-panel textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-white); color: var(--text-primary); padding: 11px 12px; font: inherit; }
+.caio-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 18px; }
+.caio-cards article { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-card); padding: 18px; }
+.caio-cards article svg { color: var(--primary-text); flex: 0 0 auto; }
+.caio-cards strong, .caio-cards span { display: block; }
+.caio-cards span { color: var(--text-secondary); margin-top: 5px; font-size: 13px; }
+.caio-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.caio-panel { border: 1px solid var(--border); border-radius: 14px; background: var(--bg-card); padding: 20px; }
+.caio-panel-heading { display: flex; gap: 10px; margin-bottom: 18px; }
+.caio-panel-heading svg { color: var(--primary-text); flex: 0 0 auto; }
+.caio-panel-heading h2 { margin: 0 0 4px; font-size: 18px; }
+.caio-panel label { display: grid; gap: 7px; margin: 14px 0; color: var(--text-secondary); font-size: 13px; font-weight: 700; }
+.caio-panel textarea { resize: vertical; }
+.caio-panel button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 9px; background: var(--primary); color: #07130e; padding: 11px 15px; font-weight: 700; cursor: pointer; }
+.caio-panel button:disabled { cursor: not-allowed; opacity: .55; }
+.caio-search { display: flex; gap: 8px; }
+.caio-search input { flex: 1; }
+.caio-search button { width: 44px; padding: 0; }
+.caio-results { display: grid; gap: 10px; margin-top: 18px; }
+.caio-results article { border-left: 3px solid var(--primary); padding: 10px 12px; background: var(--primary-soft); }
+.caio-results article div { display: flex; justify-content: space-between; gap: 12px; }
+.caio-results article span, .caio-source-list small { color: var(--text-secondary); font-size: 12px; }
+.caio-results article p { margin: 7px 0 0; color: var(--text-secondary); line-height: 1.5; }
+.caio-sources { margin-top: 18px; }
+.caio-source-list { display: grid; gap: 8px; }
+.caio-source-list div { display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--border); padding: 11px 0; }
+.caio-source-list svg { color: var(--primary-text); }
+.caio-source-list small { margin-left: auto; }
+.caio-empty { color: var(--text-secondary); font-size: 14px; }
+.caio-error { margin-bottom: 18px; border: 1px solid #ef4444; border-radius: 10px; padding: 12px 14px; color: #fecaca; background: rgba(127, 29, 29, .28); }
+.caio-spin { animation: caio-spin 1s linear infinite; }
+@keyframes caio-spin { to { transform: rotate(360deg); } }
+@media (max-width: 850px) { .caio-page { padding: 20px; } .caio-header, .caio-grid { display: grid; grid-template-columns: 1fr; } .caio-cards { grid-template-columns: 1fr; } .caio-company-picker { min-width: 0; } }
