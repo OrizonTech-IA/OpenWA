@@ -129,6 +129,19 @@ export function useProfilePictures(sessionId: string | undefined, contactIds: st
               const { pictures } = await contactApi.profilePictures(sessionId!, batch);
               save(pictures);
               client.setQueryData(queryKey, view());
+              // The gateway omits ids after a timed-out lookup so a timeout is not cached as "no
+              // picture". Retry those omitted ids one at a time so one slow contact cannot hide
+              // the valid avatars that follow it in the same batch.
+              for (const id of batch) {
+                if (id in pictures) continue;
+                try {
+                  const { pictures: retryPictures } = await contactApi.profilePictures(sessionId!, [id]);
+                  save(retryPictures);
+                  client.setQueryData(queryKey, view());
+                } catch {
+                  // Leave an unresolved id absent so a later focus or membership change retries it.
+                }
+              }
             }
           } catch {
             // Unresolved ids remain absent from the held cache and are retried on the next

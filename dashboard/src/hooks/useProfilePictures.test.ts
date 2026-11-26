@@ -304,6 +304,23 @@ test('a batch short of an id is stale at once, and the next focus asks again for
   assert.equal(result.current.isStale, false);
 });
 
+test('retries ids omitted after a timed-out lookup without retrying explicit nulls', async () => {
+  let first = true;
+  answer = (sessionId, ids) => {
+    if (ids.length === 10) return everyUrl(sessionId, ids);
+    if (first) {
+      first = false;
+      return Promise.resolve(json({ pictures: { [ids[0]]: urlFor(sessionId, ids[0]), [ids[1]]: null } }));
+    }
+    return everyUrl(sessionId, ids);
+  };
+  const ids = Array.from({ length: 13 }, (_, i) => `chat-${i}`);
+  const { result } = renderPictures('s1', ids);
+  await rtl.waitFor(() => assert.equal(result.current.data?.['chat-12'], urlFor('s1', 'chat-12')));
+  assert.deepEqual(asked(), [ids.slice(0, 10), ids.slice(10), [ids[12]]]);
+  assert.equal(result.current.data?.['chat-11'], null);
+});
+
 test('a first batch that fails reports the error', async () => {
   answer = () => Promise.resolve(json({ message: 'Too many requests' }, 429));
   const { result } = renderPictures('s1', ['a', 'b']);
