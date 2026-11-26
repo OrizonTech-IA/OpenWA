@@ -55,6 +55,7 @@ interface ChatSidebarProps {
     onFilterChange: (filter: ChatListFilter) => void;
     activeChatId?: string;
     pictures?: Record<string, string | null>;
+    onPictureError?: (chatId: string) => void;
     onSelectChat: (chat: Chat) => void;
     /** The actions behind the chevron on a group or 1:1 row. */
     rowActions?: ChatRowActions;
@@ -87,6 +88,7 @@ interface ChatListRowProps {
   today: string;
   onSelectChat: (chat: Chat) => void;
   rowActions?: ChatRowActions;
+  onPictureError?: (chatId: string) => void;
   menuOpen: boolean;
   onMenuOpenChange: (chatId: string, open: boolean) => void;
 }
@@ -104,6 +106,7 @@ const ChatListRow = memo(
     formatChatTime,
     onSelectChat,
     rowActions,
+    onPictureError,
     menuOpen,
     onMenuOpenChange,
   }: ChatListRowProps) {
@@ -125,7 +128,12 @@ const ChatListRow = memo(
           }
         }}
       >
-        <ChatAvatar chatId={chat.id} pictureUrl={pictureUrl} kind={chat.kind} />
+        <ChatAvatar
+          chatId={chat.id}
+          pictureUrl={pictureUrl}
+          kind={chat.kind}
+          onImageError={onPictureError ? () => onPictureError(chat.id) : undefined}
+        />
 
         <div className="chat-item-info">
           <div className="chat-item-top">
@@ -190,6 +198,7 @@ const ChatListRow = memo(
     a.formatChatTime === b.formatChatTime &&
     a.today === b.today &&
     a.onSelectChat === b.onSelectChat &&
+    a.onPictureError === b.onPictureError &&
     a.menuOpen === b.menuOpen &&
     a.onMenuOpenChange === b.onMenuOpenChange &&
     (b.menuOpen ? a.rowActions === b.rowActions : !a.rowActions === !b.rowActions),
@@ -401,6 +410,7 @@ function ChatSidebar({
                 chat={chat}
                 active={chatsTab.activeChatId === chat.id}
                 pictureUrl={chatsTab.pictures?.[chat.id]}
+                onPictureError={chatsTab.onPictureError}
                 formatChatTime={formatChatTime}
                 today={today}
                 onSelectChat={chatsTab.onSelectChat}

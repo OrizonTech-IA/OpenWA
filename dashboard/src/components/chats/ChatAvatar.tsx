@@ -1,5 +1,6 @@
 import type { ChatKind } from '../../services/api';
 import KindIcon from './KindIcon';
+import { useEffect, useRef } from 'react';
 
 // Pastel tone for a picture-less avatar, hashed from the chat id so a contact keeps its colour across
 // reloads. The names map to the `.avatar-tone-*` rules in Chats.css (light and dark).
@@ -30,10 +31,21 @@ function ChatAvatar({
   size?: keyof typeof ICON_SIZE;
   onImageError?: () => void;
 }) {
+  const retriedUrl = useRef<string | null>(null);
+  useEffect(() => {
+    retriedUrl.current = null;
+  }, [pictureUrl]);
+
+  const handleImageError = () => {
+    if (!onImageError || retriedUrl.current === pictureUrl) return;
+    retriedUrl.current = pictureUrl ?? null;
+    onImageError();
+  };
+
   if (pictureUrl) {
     return (
       <div className={`chat-avatar avatar-${size}`}>
-        <img src={pictureUrl} alt="" onError={onImageError} />
+        <img src={pictureUrl} alt="" onError={onImageError ? handleImageError : undefined} />
       </div>
     );
   }

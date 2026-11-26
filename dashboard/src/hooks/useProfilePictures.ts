@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { contactApi } from '../services/api';
 
 // Signed CDN URLs rotate: a held picture is reused for an hour, then asked for again.
@@ -8,8 +9,8 @@ const PICTURE_TTL_MS = 60 * 60 * 1000;
 // answer. A null is held for a minute only: a failure heals on the next change of ids after that, and a real null
 // costs one more lookup then. An absent id is asked for again at once.
 const NULL_TTL_MS = 60 * 1000;
-// The first rows are the ones the operator can see immediately. The rest of the capped sidebar is
-// topped up after this query resolves, so a slow contact lookup cannot hold the first paint hostage.
+// The gateway accepts at most 50 ids per request. The dashboard sends every chat in sequential
+// batches, with the first rows requested synchronously so the visible avatars paint first.
 const MAX_PICTURE_IDS = 50;
 const PRIORITY_PICTURE_IDS = 10;
 
@@ -57,12 +58,11 @@ function pendingFor(client: QueryClient, sessionId: string): Set<string> {
  * Firing one useProfilePicture per row bursts N parallel calls and exhausts the per-IP throttle
  * (429s); the batch endpoint resolves up to 50 ids server-side, 5 at a time with a per-id deadline.
  *
- * Ids are resolved in LIST ORDER, capped at 50 — for long sidebars the visible top rows get their
- * pictures instead of an arbitrary sorted subset (which can exclude every row on screen). The
- * first ten are awaited for the first paint; the remaining ids are topped up in the background.
+ * Ids are resolved in LIST ORDER. The first ten are awaited for the first paint, then every
+ * remaining id is topped up in sequential batches of 50 so long sidebars do not lose avatars.
  * The query key uses the sorted id set so reordering the sidebar doesn't refetch.
  *
- * A change of membership (a message from a chat outside the top 50 pushes one out) is a new key, but
+ * A change of membership is a new key, but
  * only the ids not held yet are asked for: every answer is kept per session with the time it arrived and
  * reused for an hour, a null (hidden, no picture, or a lookup that failed) for a minute. What is held lives
  * in the query cache, so a page that mounts again with the same ids asks for nothing. The data returned
@@ -75,9 +75,9 @@ function pendingFor(client: QueryClient, sessionId: string): Set<string> {
  */
 export function useProfilePictures(sessionId: string | undefined, contactIds: string[]) {
   const queryClient = useQueryClient();
-  const requestIds = contactIds.slice(0, MAX_PICTURE_IDS); // list order: visible top rows win the cap
+  const requestIds = contactIds;
   const sortedKey = [...requestIds].sort().join(',');
-  return useQuery<Record<string, string | null>, Error>({
+  const query = useQuery<Record<string, string | null>, Error>({
     queryKey: ['profilePictures', sessionId, sortedKey] as const,
     queryFn: async ({ client, queryKey }) => {
       const held = heldFor(client, sessionId!);
@@ -116,20 +116,27 @@ export function useProfilePictures(sessionId: string | undefined, contactIds: st
           priorityMissing.forEach(id => pending.delete(id));
         }
       }
-      // Do not make the first visible rows wait for the rest of the sidebar. The background request
-      // updates the same query cache as soon as it settles, so rows farther down appear without a
-      // second page load and an in-flight set prevents focus/remounts from duplicating the work.
+      // Do not make the first visible rows wait for the rest of the sidebar. Background batches
+      // update the same query cache as they settle. They are sequential to stay within the API
+      // and WhatsApp lookup budgets while still covering every chat.
       const topUp = backgroundMissing.filter(id => !pending.has(id));
       if (topUp.length > 0) {
         topUp.forEach(id => pending.add(id));
-        void contactApi
-          .profilePictures(sessionId!, topUp)
-          .then(({ pictures }) => {
-            save(pictures);
-            client.setQueryData(queryKey, view());
-          })
-          .catch(() => undefined)
-          .finally(() => topUp.forEach(id => pending.delete(id)));
+        void (async () => {
+          try {
+            for (let i = 0; i < topUp.length; i += MAX_PICTURE_IDS) {
+              const batch = topUp.slice(i, i + MAX_PICTURE_IDS);
+              const { pictures } = await contactApi.profilePictures(sessionId!, batch);
+              save(pictures);
+              client.setQueryData(queryKey, view());
+            }
+          } catch {
+            // Unresolved ids remain absent from the held cache and are retried on the next
+            // membership change or focus refresh.
+          } finally {
+            topUp.forEach(id => pending.delete(id));
+          }
+        })();
       }
       return view();
     },
@@ -153,4 +160,15 @@ export function useProfilePictures(sessionId: string | undefined, contactIds: st
     gcTime: 30 * 60 * 1000,
     retry: false,
   });
+
+  const retryPicture = useCallback(
+    (contactId: string) => {
+      if (!sessionId) return;
+      heldFor(queryClient, sessionId).delete(contactId);
+      void queryClient.invalidateQueries({ queryKey: ['profilePictures', sessionId] });
+    },
+    [queryClient, sessionId],
+  );
+
+  return { ...query, retryPicture };
 }

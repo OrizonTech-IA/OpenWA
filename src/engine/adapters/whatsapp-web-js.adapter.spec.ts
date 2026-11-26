@@ -10123,7 +10123,8 @@ describe('WhatsAppWebJsAdapter profile picture of a migrated contact', () => {
       return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
     });
     const evaluate = jest.fn().mockResolvedValue(lid);
-    return { getProfilePicUrl, pupPage: { evaluate } };
+    const getContactLidAndPhone = jest.fn().mockResolvedValue([]);
+    return { getProfilePicUrl, getContactLidAndPhone, pupPage: { evaluate } };
   };
 
   it('answers the phone form without reading the LID when it works', async () => {
@@ -10190,13 +10191,19 @@ describe('WhatsAppWebJsAdapter profile picture of a migrated contact', () => {
     }
   });
 
-  it.each([
-    ['a group', '120363000000000001@g.us'],
-    ['a LID', LID],
-  ])('does not retry for %s', async (_label, id) => {
+  it('does not retry for a group', async () => {
+    const id = '120363000000000001@g.us';
     const client = clientWith({ [id]: undefined });
     await expect(readyAdapter(client).getProfilePicture(id)).resolves.toBeNull();
     expect(client.pupPage.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('retries a privacy-id contact through its phone twin', async () => {
+    const client = clientWith({ [LID]: undefined, [PHONE]: URL });
+    client.getContactLidAndPhone = jest.fn().mockResolvedValue([{ lid: LID, pn: PHONE }]);
+    await expect(readyAdapter(client).getProfilePicture(LID)).resolves.toBe(URL);
+    expect(client.getContactLidAndPhone).toHaveBeenCalledWith([LID]);
+    expect(client.getProfilePicUrl.mock.calls).toEqual([[LID], [PHONE]]);
   });
 
   describe('readCurrentLid, the in-page read', () => {

@@ -406,15 +406,23 @@ export class WwebjsContacts {
     // or fail where the LID answers (the Number Checker asks by the phone id its check returned). It is
     // retried once by the LID the page holds; a dead or unanswering page is not retried, and a retry that
     // gets nothing leaves the first outcome standing.
-    const byLid = parseWaId(contactId).kind === 'user';
+    const kind = parseWaId(contactId).kind;
+    const byLid = kind === 'user';
+    const byPhone = kind === 'lid';
     let url: string | undefined;
     try {
       url = await this.client().getProfilePicUrl(contactId);
     } catch (error) {
       rethrowIfNavigation(this.host, error);
       const pageDown = this.host.isPageTransportError(error) || isProtocolTimeout(error);
-      const viaLid = byLid && !pageDown ? await this.profilePictureByLid(contactId) : undefined;
-      if (viaLid) return viaLid;
+      const alternative = !pageDown
+        ? byLid
+          ? await this.profilePictureByLid(contactId)
+          : byPhone
+            ? await this.profilePictureByPhone(contactId)
+            : undefined
+        : undefined;
+      if (alternative) return alternative;
       // Nothing reaching here is a statement about the avatar, so nothing reaching here may become
       // null. Returning null would answer 200 with {"url": null} — byte-identical to the verdict
       // above — and a caller that caches "no avatar" would record absence for a lookup that never
@@ -431,7 +439,10 @@ export class WwebjsContacts {
       this.host.logger.warn(`Failed to get profile picture for ${contactId}: ${String(error)}`);
       throw new EngineTransportError(`Could not read the profile picture for ${contactId}: ${String(error)}`);
     }
-    return url || (byLid ? await this.profilePictureByLid(contactId) : undefined) || null;
+    if (url) return url;
+    if (byLid) return (await this.profilePictureByLid(contactId)) || null;
+    if (byPhone) return (await this.profilePictureByPhone(contactId)) || null;
+    return null;
   }
 
   /**
@@ -451,6 +462,24 @@ export class WwebjsContacts {
       if (error instanceof EngineNotReadyError) throw error;
       this.host.reportIfPageTransportError(error, 'getProfilePicture');
       this.host.logger.debug('Could not read a profile picture by its LID', { error: String(error) });
+      return undefined;
+    }
+  }
+
+  /**
+   * A privacy-id chat can be returned by the sidebar as `<lid>@lid`, while whatsapp-web.js can
+   * expose the picture only through the phone-shaped twin. Resolve that twin without changing the
+   * id published by the gateway, then retry the same picture lookup by phone.
+   */
+  private async profilePictureByPhone(lidId: string): Promise<string | undefined> {
+    try {
+      const phone = await this.resolveContactPhone(lidId);
+      if (!phone) return undefined;
+      return (await this.client().getProfilePicUrl(`${phone}@c.us`)) || undefined;
+    } catch (error) {
+      if (error instanceof EngineNotReadyError) throw error;
+      this.host.reportIfPageTransportError(error, 'getProfilePicture');
+      this.host.logger.debug('Could not read a profile picture by the phone twin', { error: String(error) });
       return undefined;
     }
   }

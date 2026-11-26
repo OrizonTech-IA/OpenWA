@@ -85,13 +85,13 @@ function renderPictures(sessionId: string | undefined, ids: string[], existing?:
 
 const asked = () => requests.map(request => request.ids);
 
-test('asks visible ids first, then tops up the remaining ids to 50', async () => {
+test('asks visible ids first, then tops up every remaining id in 50-id batches', async () => {
   const ids = Array.from({ length: 60 }, (_, i) => `chat-${i}`);
   const { result } = renderPictures('s1', ids);
-  await rtl.waitFor(() => assert.equal(Object.keys(result.current.data ?? {}).length, 50));
-  assert.deepEqual(asked(), [ids.slice(0, 10), ids.slice(10, 50)]);
+  await rtl.waitFor(() => assert.equal(Object.keys(result.current.data ?? {}).length, 60));
+  assert.deepEqual(asked(), [ids.slice(0, 10), ids.slice(10, 60)]);
   assert.equal(result.current.data?.['chat-49'], urlFor('s1', 'chat-49'));
-  assert.equal(result.current.data?.['chat-50'], undefined);
+  assert.equal(result.current.data?.['chat-50'], urlFor('s1', 'chat-50'));
 });
 
 test('a change of membership by one id asks for that id alone', async () => {

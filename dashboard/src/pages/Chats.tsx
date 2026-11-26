@@ -2249,6 +2249,7 @@ export function Chats() {
               archive: { count: archivedCount, showing: showArchived, onToggle: () => setShowArchived(v => !v) },
               activeChatId: activeChat?.id,
               pictures: listPics.data,
+              onPictureError: listPics.retryPicture,
               onSelectChat: setActiveChat,
             }}
             channelsTab={{
